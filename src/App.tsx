@@ -1,11 +1,5 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import { Play, RotateCcw, Code, Sparkles, Wand2 } from 'lucide-react';
-import { GoogleGenAI, Type } from '@google/genai';
 
 // --- Types ---
 export interface StickmanHandle {
@@ -24,14 +18,35 @@ interface StickmanProps {
   color?: string;
 }
 
-// --- Stickman Component ---
+// --- Helper Math ---
+const getEnd = (x: number, y: number, angle: number, len: number) => ({
+  x: x + Math.cos(angle) * len,
+  y: y + Math.sin(angle) * len
+});
+
+const updateLine = (ref: React.RefObject<SVGLineElement | null>, x1: number, y1: number, x2: number, y2: number) => {
+  if (ref.current) {
+    ref.current.setAttribute('x1', x1.toFixed(2));
+    ref.current.setAttribute('y1', y1.toFixed(2));
+    ref.current.setAttribute('x2', x2.toFixed(2));
+    ref.current.setAttribute('y2', y2.toFixed(2));
+  }
+};
+
+// --- Stickman Component (Skeletal Engine) ---
 const Stickman = forwardRef<StickmanHandle, StickmanProps>(({ id, initialX, color = 'black' }, ref) => {
   const groupRef = useRef<SVGGElement>(null);
   const bodyRef = useRef<SVGGElement>(null);
-  const armLRef = useRef<SVGLineElement>(null);
-  const armRRef = useRef<SVGLineElement>(null);
-  const legLRef = useRef<SVGLineElement>(null);
-  const legRRef = useRef<SVGLineElement>(null);
+  
+  // 8-part limb system (Upper/Lower for each arm/leg)
+  const armL1Ref = useRef<SVGLineElement>(null);
+  const armL2Ref = useRef<SVGLineElement>(null);
+  const armR1Ref = useRef<SVGLineElement>(null);
+  const armR2Ref = useRef<SVGLineElement>(null);
+  const legL1Ref = useRef<SVGLineElement>(null);
+  const legL2Ref = useRef<SVGLineElement>(null);
+  const legR1Ref = useRef<SVGLineElement>(null);
+  const legR2Ref = useRef<SVGLineElement>(null);
   
   const [speech, setSpeech] = useState('');
 
@@ -133,141 +148,183 @@ const Stickman = forwardRef<StickmanHandle, StickmanProps>(({ id, initialX, colo
       const dt = time - lastTime;
       lastTime = time;
 
-      // Base limb positions
-      let armLx = -20, armLy = -10;
-      let armRx = 20, armRy = -10;
-      let legLx = -15, legLy = 30;
-      let legRx = 15, legRy = 30;
+      // --- 1. State Machine & Kinematics ---
+      // Default Angles (Straight down = PI/2)
+      let armUpperL_angle = Math.PI / 2;
+      let armLowerL_angle = Math.PI / 2;
+      let armUpperR_angle = Math.PI / 2;
+      let armLowerR_angle = Math.PI / 2;
+      let legUpperL_angle = Math.PI / 2;
+      let legLowerL_angle = Math.PI / 2;
+      let legUpperR_angle = Math.PI / 2;
+      let legLowerR_angle = Math.PI / 2;
+      
+      let bounce = 0;
+      let bodyRotation = 0;
+      let scaleY = 1;
 
-      // 1. Handle Walking
+      // Base State: Idle vs Walk vs Dance
       if (state.current.isWalking) {
         const elapsed = time - state.current.walkStartTime;
         const progress = Math.min(elapsed / state.current.walkDuration, 1);
         state.current.x = state.current.walkStart + (state.current.walkTarget - state.current.walkStart) * progress;
         state.current.t += dt * 0.015; 
+        const cycle = state.current.t;
+        const swing = Math.sin(cycle);
 
-        const swing = Math.sin(state.current.t) * 15;
-        armLx += swing; armRx -= swing;
-        legLx -= swing; legRx += swing;
+        // Legs (FK)
+        legUpperR_angle = Math.PI/2 - swing * 0.8;
+        legLowerR_angle = legUpperR_angle + Math.max(0, swing * 1.5); // Knee bends back
+        legUpperL_angle = Math.PI/2 + swing * 0.8;
+        legLowerL_angle = legUpperL_angle + Math.max(0, -swing * 1.5);
+
+        // Arms (Opposite to legs)
+        armUpperR_angle = Math.PI/2 + swing * 0.8;
+        armLowerR_angle = armUpperR_angle - Math.max(0, swing * 1.5); // Elbow bends forward
+        armUpperL_angle = Math.PI/2 - swing * 0.8;
+        armLowerL_angle = armUpperL_angle - Math.max(0, -swing * 1.5);
+
+        bounce = Math.abs(Math.cos(cycle)) * 4; // Center of mass bobbing
 
         if (progress >= 1) {
           state.current.isWalking = false;
-          if (state.current.walkResolve) {
-            state.current.walkResolve();
-            state.current.walkResolve = null;
-          }
+          if (state.current.walkResolve) { state.current.walkResolve(); state.current.walkResolve = null; }
         }
-      } else if (!state.current.isDancing) {
-        state.current.t = 0; 
+      } else if (state.current.isDancing) {
+        const elapsed = time - state.current.danceStartTime;
+        const progress = Math.min(elapsed / state.current.danceDuration, 1);
+        const d = time * 0.01;
+        
+        armUpperR_angle = Math.PI/2 + Math.sin(d) * 2;
+        armLowerR_angle = armUpperR_angle - 1;
+        armUpperL_angle = Math.PI/2 + Math.cos(d) * 2;
+        armLowerL_angle = armUpperL_angle - 1;
+        
+        legUpperR_angle = Math.PI/2 - Math.sin(d*2) * 0.5;
+        legLowerR_angle = legUpperR_angle + Math.abs(Math.cos(d*2)) * 1.5;
+        legUpperL_angle = Math.PI/2 + Math.cos(d*2) * 0.5;
+        legLowerL_angle = legUpperL_angle + Math.abs(Math.sin(d*2)) * 1.5;
+        
+        bounce = Math.abs(Math.sin(d * 4)) * 6;
+
+        if (progress >= 1) {
+          state.current.isDancing = false;
+          if (state.current.danceResolve) { state.current.danceResolve(); state.current.danceResolve = null; }
+        }
+      } else {
+        // Idle (Breathing)
+        state.current.t = 0;
+        const breath = Math.sin(time * 0.003);
+        armUpperR_angle = Math.PI/2 + 0.1;
+        armLowerR_angle = armUpperR_angle - 0.2;
+        armUpperL_angle = Math.PI/2 - 0.1;
+        armLowerL_angle = armUpperL_angle - 0.2;
+        bounce = breath * 1.5;
       }
 
-      // 2. Handle Jumping
+      // Overrides (Jump, Attack, Wave, Flip)
       if (state.current.isJumping) {
         const elapsed = time - state.current.jumpStartTime;
         const progress = Math.min(elapsed / state.current.jumpDuration, 1);
-        state.current.yOffset = Math.sin(progress * Math.PI) * 30; 
+        state.current.yOffset = Math.sin(progress * Math.PI) * 40; 
+        
+        // Squash and Stretch
+        scaleY = 1 + Math.cos(progress * Math.PI * 2) * 0.1;
+
+        // Tuck limbs
+        legUpperR_angle = Math.PI/2 - 0.5; legLowerR_angle = legUpperR_angle + 1.5;
+        legUpperL_angle = Math.PI/2 + 0.2; legLowerL_angle = legUpperL_angle + 1.5;
+        armUpperR_angle = Math.PI/2 - 2.5; armLowerR_angle = armUpperR_angle - 0.5;
+        armUpperL_angle = Math.PI/2 + 2.5; armLowerL_angle = armUpperL_angle - 0.5;
 
         if (progress >= 1) {
           state.current.isJumping = false;
           state.current.yOffset = 0;
-          if (state.current.jumpResolve) {
-            state.current.jumpResolve();
-            state.current.jumpResolve = null;
-          }
+          if (state.current.jumpResolve) { state.current.jumpResolve(); state.current.jumpResolve = null; }
         }
       }
 
-      // 3. Handle Attacking (Punch)
       if (state.current.isAttacking) {
         const elapsed = time - state.current.attackStartTime;
         const progress = Math.min(elapsed / state.current.attackDuration, 1);
         const punch = Math.sin(progress * Math.PI); // 0 -> 1 -> 0
         
-        armRx = 20 + punch * 20;
-        armRy = -10 - punch * 10;
+        armUpperR_angle = Math.PI/2 - punch * 2.0; // Swing forward
+        armLowerR_angle = armUpperR_angle + punch * 0.5; // Straighten out
+        bodyRotation = punch * 15; // Lean into punch
 
         if (progress >= 1) {
           state.current.isAttacking = false;
-          if (state.current.attackResolve) {
-            state.current.attackResolve();
-            state.current.attackResolve = null;
-          }
+          if (state.current.attackResolve) { state.current.attackResolve(); state.current.attackResolve = null; }
         }
       }
 
-      // 4. Handle Waving
       if (state.current.isWaving) {
         const elapsed = time - state.current.waveStartTime;
         const progress = Math.min(elapsed / state.current.waveDuration, 1);
         
-        armRx = 20 + Math.sin(progress * Math.PI * 8) * 10;
-        armRy = -35; // Arm raised
+        armUpperR_angle = -Math.PI/2 + 0.5; // Arm up
+        armLowerR_angle = armUpperR_angle + Math.sin(progress * Math.PI * 8) * 0.8; // Wave
 
         if (progress >= 1) {
           state.current.isWaving = false;
-          if (state.current.waveResolve) {
-            state.current.waveResolve();
-            state.current.waveResolve = null;
-          }
+          if (state.current.waveResolve) { state.current.waveResolve(); state.current.waveResolve = null; }
         }
       }
 
-      // 5. Handle Dancing
-      if (state.current.isDancing) {
-        const elapsed = time - state.current.danceStartTime;
-        const progress = Math.min(elapsed / state.current.danceDuration, 1);
-        
-        const danceSpeed = time * 0.02;
-        armLx = -20 + Math.sin(danceSpeed) * 20;
-        armLy = -20 + Math.cos(danceSpeed) * 10;
-        armRx = 20 + Math.cos(danceSpeed) * 20;
-        armRy = -20 + Math.sin(danceSpeed) * 10;
-        
-        legLx = -15 + Math.sin(danceSpeed * 2) * 10;
-        legRx = 15 + Math.cos(danceSpeed * 2) * 10;
-        
-        state.current.yOffset = Math.abs(Math.sin(danceSpeed)) * 10;
-
-        if (progress >= 1) {
-          state.current.isDancing = false;
-          state.current.yOffset = 0;
-          if (state.current.danceResolve) {
-            state.current.danceResolve();
-            state.current.danceResolve = null;
-          }
-        }
-      }
-
-      // 6. Handle Flipping
       if (state.current.isFlipping) {
         const elapsed = time - state.current.flipStartTime;
         const progress = Math.min(elapsed / state.current.flipDuration, 1);
         
         state.current.rotation = progress * 360 * state.current.direction;
-        state.current.yOffset = Math.sin(progress * Math.PI) * 40; // Jump while flipping
+        state.current.yOffset = Math.sin(progress * Math.PI) * 50; 
+        
+        // Tuck tight for flip
+        legUpperR_angle = Math.PI/2 - 1.0; legLowerR_angle = legUpperR_angle + 2.0;
+        legUpperL_angle = Math.PI/2 - 0.5; legLowerL_angle = legUpperL_angle + 2.0;
 
         if (progress >= 1) {
           state.current.isFlipping = false;
           state.current.rotation = 0;
           state.current.yOffset = 0;
-          if (state.current.flipResolve) {
-            state.current.flipResolve();
-            state.current.flipResolve = null;
-          }
+          if (state.current.flipResolve) { state.current.flipResolve(); state.current.flipResolve = null; }
         }
       }
 
-      // Apply DOM Updates
-      if (armLRef.current) { armLRef.current.setAttribute('x2', String(armLx)); armLRef.current.setAttribute('y2', String(armLy)); }
-      if (armRRef.current) { armRRef.current.setAttribute('x2', String(armRx)); armRRef.current.setAttribute('y2', String(armRy)); }
-      if (legLRef.current) { legLRef.current.setAttribute('x2', String(legLx)); legLRef.current.setAttribute('y2', String(legLy)); }
-      if (legRRef.current) { legRRef.current.setAttribute('x2', String(legRx)); legRRef.current.setAttribute('y2', String(legRy)); }
+      // --- 2. Forward Kinematics (FK) Solver ---
+      const shoulderX = 0, shoulderY = -30;
+      const hipX = 0, hipY = 0;
+      const armLen = 14, legLen = 18;
+
+      const elbowL = getEnd(shoulderX, shoulderY, armUpperL_angle, armLen);
+      const handL = getEnd(elbowL.x, elbowL.y, armLowerL_angle, armLen);
+
+      const elbowR = getEnd(shoulderX, shoulderY, armUpperR_angle, armLen);
+      const handR = getEnd(elbowR.x, elbowR.y, armLowerR_angle, armLen);
+
+      const kneeL = getEnd(hipX, hipY, legUpperL_angle, legLen);
+      const footL = getEnd(kneeL.x, kneeL.y, legLowerL_angle, legLen);
+
+      const kneeR = getEnd(hipX, hipY, legUpperR_angle, legLen);
+      const footR = getEnd(kneeR.x, kneeR.y, legLowerR_angle, legLen);
+
+      // --- 3. DOM Updates ---
+      updateLine(armL1Ref, shoulderX, shoulderY, elbowL.x, elbowL.y);
+      updateLine(armL2Ref, elbowL.x, elbowL.y, handL.x, handL.y);
+      updateLine(armR1Ref, shoulderX, shoulderY, elbowR.x, elbowR.y);
+      updateLine(armR2Ref, elbowR.x, elbowR.y, handR.x, handR.y);
+      
+      updateLine(legL1Ref, hipX, hipY, kneeL.x, kneeL.y);
+      updateLine(legL2Ref, kneeL.x, kneeL.y, footL.x, footL.y);
+      updateLine(legR1Ref, hipX, hipY, kneeR.x, kneeR.y);
+      updateLine(legR2Ref, kneeR.x, kneeR.y, footR.x, footR.y);
 
       if (groupRef.current) {
-        groupRef.current.setAttribute('transform', `translate(${state.current.x}, ${100 - state.current.yOffset})`);
+        groupRef.current.setAttribute('transform', `translate(${state.current.x}, ${100 - state.current.yOffset + bounce})`);
       }
       if (bodyRef.current) {
-        bodyRef.current.setAttribute('transform', `scale(${state.current.direction}, 1) rotate(${state.current.rotation}, 0, -15)`);
+        const totalRot = state.current.rotation + bodyRotation;
+        bodyRef.current.setAttribute('transform', `scale(${state.current.direction}, ${scaleY}) rotate(${totalRot}, 0, -15)`);
       }
 
       reqId = requestAnimationFrame(loop);
@@ -289,14 +346,26 @@ const Stickman = forwardRef<StickmanHandle, StickmanProps>(({ id, initialX, colo
         </g>
       )}
 
-      {/* Stickman Body */}
+      {/* Stickman Skeletal Body */}
       <g ref={bodyRef}>
         <circle cx="0" cy="-40" r="10" stroke={color} strokeWidth="2" fill="none" />
-        <line x1="0" y1="-30" x2="0" y2="0" stroke={color} strokeWidth="2" />
-        <line ref={armLRef} x1="0" y1="-20" x2="-20" y2="-10" stroke={color} strokeWidth="2" strokeLinecap="round" />
-        <line ref={armRRef} x1="0" y1="-20" x2="20" y2="-10" stroke={color} strokeWidth="2" strokeLinecap="round" />
-        <line ref={legLRef} x1="0" y1="0" x2="-15" y2="30" stroke={color} strokeWidth="2" strokeLinecap="round" />
-        <line ref={legRRef} x1="0" y1="0" x2="15" y2="30" stroke={color} strokeWidth="2" strokeLinecap="round" />
+        <line x1="0" y1="-30" x2="0" y2="0" stroke={color} strokeWidth="2" strokeLinecap="round" />
+        
+        {/* Left Arm */}
+        <line ref={armL1Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        <line ref={armL2Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        
+        {/* Right Arm */}
+        <line ref={armR1Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        <line ref={armR2Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        
+        {/* Left Leg */}
+        <line ref={legL1Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        <line ref={legL2Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        
+        {/* Right Leg */}
+        <line ref={legR1Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
+        <line ref={legR2Ref} stroke={color} strokeWidth="2" strokeLinecap="round" />
       </g>
     </g>
   );
@@ -359,41 +428,46 @@ export default function App() {
     setError('');
     
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Generate a stickman animation script based on this request: "${prompt}". 
-        The stage is 600px wide. Actor A (Blue) starts at x:50, Actor B (Red) starts at x:550.
-        Available actions: move(requires x), jump, speak(requires text), attack, wave, dance, flip.
-        Group actions in inner arrays if they should happen at the same time. Make it creative!`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            description: "A list of steps. Each step is an array of actions that happen simultaneously.",
-            items: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  actor: { type: Type.STRING, description: "Actor ID: 'A' or 'B'" },
-                  action: { type: Type.STRING, description: "Action type: move, jump, speak, attack, wave, dance, flip" },
-                  x: { type: Type.NUMBER, description: "Target X coordinate for move (0-600)" },
-                  text: { type: Type.STRING, description: "Text for speak action" },
-                  duration: { type: Type.NUMBER, description: "Duration in ms (e.g., 500, 1000, 2000)" }
-                },
-                required: ["actor", "action"]
-              }
-            }
-          }
-        }
+      const promptText = `Generate a stickman animation script based on this request: "${prompt}". 
+The stage is 600px wide. Actor A (Blue) starts at x:50, Actor B (Red) starts at x:550.
+Available actions: move(requires x), jump, speak(requires text), attack, wave, dance, flip.
+Group actions in inner arrays if they should happen at the same time. Make it creative!
+
+IMPORTANT: You MUST return ONLY a valid JSON array of arrays of action objects. Do not include any markdown formatting, backticks, or explanations. Just the raw JSON array.
+Example format:
+[
+  [{"actor": "A", "action": "move", "x": 200, "duration": 1000}],
+  [{"actor": "B", "action": "jump", "duration": 800}]
+]`;
+
+      const response = await fetch("https://unified-ai-backend.tj15982183241.workers.dev/v1/models/small", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: promptText }]
+        })
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
       
-      const generatedJson = response.text;
-      if (generatedJson) {
-        const parsed = JSON.parse(generatedJson);
+      if (data.success && data.content) {
+        let jsonStr = data.content;
+        // Try to extract JSON if the model wrapped it in markdown
+        const match = jsonStr.match(/\[[\s\S]*\]/);
+        if (match) {
+          jsonStr = match[0];
+        }
+        const parsed = JSON.parse(jsonStr);
         setJsonText(JSON.stringify(parsed, null, 2));
         handleReset(); // Reset stage for the new story
+      } else {
+        throw new Error("Invalid response from custom backend");
       }
     } catch (err: any) {
       setError('AI Generation failed: ' + err.message);
@@ -467,6 +541,10 @@ export default function App() {
               <label className="flex items-center gap-2 text-sm font-semibold text-blue-800 mb-2">
                 <Sparkles size={16} />
                 AI Director: Describe a scene
+                <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full border border-blue-200 flex items-center gap-1">
+                  <Wand2 size={10} />
+                  Powered by Llama 3.1
+                </span>
               </label>
               <input
                 type="text"
