@@ -1,0 +1,5 @@
+{
+  "name": "Stickman Demo",
+  "description": "A simple stickman animation demo with walking, jumping, and speech bubble.",
+  "requestFramePermissions": []
+}
