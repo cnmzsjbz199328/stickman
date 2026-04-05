@@ -1,27 +1,57 @@
-# 🎬 AI-Driven Stickman Story Engine
+# 🎬 AI-Driven Stickman Skeletal Engine
 
-A lightweight, high-performance SVG stickman animation engine built with React. It features a JSON-driven scripting system and integrates Google's Gemini AI to translate natural language prompts directly into choreographed animations.
+A high-performance, 2D skeletal animation engine built with React and SVG. It features a custom Forward Kinematics (FK) joint system, a robust state machine, and an AI Director powered by **Llama 3.1 (8B)** to translate natural language prompts directly into choreographed JSON animations.
 
-## ✨ Features
+## ✨ Core Technical Features
 
-- **🚀 High-Performance SVG Animation**: Uses `requestAnimationFrame` and direct DOM manipulation (`useRef`) to bypass React's render cycle, ensuring buttery-smooth 60FPS skeletal animations.
-- **📜 JSON-Driven Scripting**: Choreograph complex scenes using a simple, declarative JSON array structure. Supports both sequential steps and parallel actions.
-- **🤖 AI Director (Gemini Integration)**: Type a natural language prompt (e.g., *"A walks to B, says hello, and B does a backflip"*), and the Gemini AI will automatically generate the corresponding JSON script using strict Structured Outputs (`responseSchema`).
-- **🎭 Rich Action Library**: Built-in support for walking, jumping, speaking, attacking, waving, dancing, and flipping.
+### 1. 🦴 Skeletal Animation & Forward Kinematics (FK)
+Unlike basic SVG animations that manipulate raw `(x, y)` coordinates, this engine uses a true hierarchical joint system.
+- **8-Part Limb System**: The body is divided into hierarchical segments: `Shoulder -> Upper Arm -> Elbow -> Lower Arm` and `Hip -> Upper Leg -> Knee -> Lower Leg`.
+- **Angle-Driven Math**: Animations are driven by calculating angles (`Math.sin()`, `Math.cos()`) rather than absolute positions. The engine uses Forward Kinematics to derive the final `(x, y)` coordinates of the hands and feet based on the angles of the parent joints.
+  ```javascript
+  const getEnd = (x, y, angle, len) => ({
+    x: x + Math.cos(angle) * len,
+    y: y + Math.sin(angle) * len
+  });
+  ```
 
-## 🛠️ Tech Stack
+### 2. ⚙️ High-Performance Render Loop
+React's standard state (`useState`) is too slow for 60FPS animations due to virtual DOM diffing overhead.
+- **Direct DOM Manipulation**: The engine uses a single `requestAnimationFrame` loop.
+- **Ref-Based Updates**: We maintain references (`useRef`) to the underlying SVG `<line>` and `<g>` elements and update them directly via `setAttribute()`, completely bypassing React's render cycle during playback.
 
-- **Framework**: React 19 + TypeScript + Vite
-- **Styling**: Tailwind CSS v4
-- **Icons**: Lucide React
-- **AI Integration**: `@google/genai` (Gemini 3 Flash Preview)
+### 3. 🌍 World Simulation & Physics System
+The engine has evolved from a pure animation player into a mini game engine with spatial awareness.
+- **Shared World State**: Actors register themselves in a shared `WorldState` ref, allowing them to know each other's positions without triggering React re-renders.
+- **AABB Collision Detection**: Characters have a bounding box (width: 40px). When walking, the engine checks for collisions and physically prevents actors from overlapping or walking through each other.
+- **Hit Detection & Knockback**: The `attack` action isn't just a visual animation. It casts a hitbox (60px range). If another actor is within range, it triggers their `onHit` callback, interrupting their current action and applying a physical knockback force with a flailing animation.
 
-## 🎮 How It Works
+### 4. 🧠 Animation State Machine & Physics
+The engine includes a built-in state machine that handles blending and overrides:
+- **Base States**: `Idle` (breathing), `Walk` (swinging limbs), `Dance`.
+- **Overrides**: Actions like `Jump`, `Attack`, `Wave`, and `Flip` temporarily override specific limb angles or body rotations.
+- **Animation Juice**: Includes procedural physical nuances like **Center of Mass bouncing** (the body bobs up and down while walking) and **Squash & Stretch** (the body elongates during a jump).
 
-The engine separates the "Brain" (AI/Scripting) from the "Body" (Rendering). 
+### 5. 🤖 AI Director (Llama 3.1 Integration)
+The project integrates a custom AI backend (`unified-ai-backend.tj15982183241.workers.dev`) running **Llama 3.1 8B** via Cerebras.
+- **Prompt Engineering**: Since Llama 3.1 does not have native enforced JSON schemas like Gemini, the engine uses strict prompt engineering to instruct the model to return *only* raw JSON.
+- **Robust Parsing**: Includes a regex fallback (`jsonStr.match(/\[[\s\S]*\]/)`) to safely extract the JSON array even if the LLM wraps the response in Markdown code blocks.
 
-### The Scripting Engine
-Scripts are written as an array of steps. Each step is an array of actions that happen **simultaneously**. The engine waits for all actions in a step to complete before moving to the next step.
+### 6. 🚀 Future Expansions & Technical Vision (Roadmap to a 2D Game Engine)
+The engine is transitioning from an animation player into a fully systematic AI-driven 2D game engine. The development roadmap is prioritized as follows:
+
+1. **Vertical Physics & Gravity**: Introduce a true Y-axis, vertical velocity (`vy`), and gravity to support jumping, falling, and ground collision.
+2. **Unified World System**: Consolidate actors and static objects (walls, tables, weapons) into a single `World` state with a unified spatial structure (`x, y, width, height, type, solid`).
+3. **Platform System**: Implement one-way platforms (stand on top, pass through from below) to evolve from a "flat stage" to a level-based environment.
+4. **Independent Collision System**: Decouple collision logic from movement/attack actions into a standalone `CollisionSystem` that handles solid (blocking) and trigger (hit/pickup) collisions.
+5. **Extensible Action System**: Refactor hardcoded actions into a registry-based `ActionSystem` and introduce a **Timeline System** to support action overlapping, canceling, and blending.
+6. **Weapon System (V1)**: Bind weapons to FK skeletal joints (hands) with independent hitboxes that activate during attacks.
+7. **AI Protocol Upgrade**: Enhance the JSON schema so the AI generates not just the `script`, but also the `actors` and `objects` to dynamically construct the world.
+8. **Event System**: Introduce an event bus (`emit("hit")`, `emit("land")`) to trigger reactive behaviors and allow the AI to generate dynamic story continuations based on engine events.
+
+## 📜 The JSON Scripting Protocol
+
+Scripts are parsed as an array of steps. Each step is an array of actions that execute **simultaneously** (parallel). The engine waits for all actions in a step to resolve before advancing to the next step (sequential).
 
 ```json
 [
@@ -30,12 +60,13 @@ Scripts are written as an array of steps. Each step is an array of actions that 
     { "actor": "B", "action": "wave", "duration": 1000 }
   ],
   [
-    { "actor": "A", "action": "speak", "text": "Hello!", "duration": 1500 }
+    { "actor": "A", "action": "speak", "text": "Take this!", "duration": 1500 },
+    { "actor": "A", "action": "attack", "duration": 400 }
   ]
 ]
 ```
 
-### Available Actions
+### Supported Action API
 
 | Action | Description | Required Params | Optional Params |
 | :--- | :--- | :--- | :--- |
@@ -51,7 +82,6 @@ Scripts are written as an array of steps. Each step is an array of actions that 
 
 ### Prerequisites
 - Node.js (v18+ recommended)
-- A Google Gemini API Key
 
 ### Installation
 
@@ -60,47 +90,9 @@ Scripts are written as an array of steps. Each step is an array of actions that 
    npm install
    ```
 
-2. Set up your environment variables:
-   Create a `.env` file in the root directory and add your Gemini API key:
-   ```env
-   GEMINI_API_KEY="your_api_key_here"
-   ```
-
-3. Start the development server:
+2. Start the development server:
    ```bash
    npm run dev
    ```
 
-## 🧠 The AI Director Implementation
-
-The AI Director uses the `@google/genai` SDK with a strict `responseSchema`. This forces the LLM to output a perfectly formatted JSON array that matches our engine's exact requirements, eliminating parsing errors and hallucinations.
-
-```typescript
-responseSchema: {
-  type: Type.ARRAY,
-  items: {
-    type: Type.ARRAY,
-    items: {
-      type: Type.OBJECT,
-      properties: {
-        actor: { type: Type.STRING },
-        action: { type: Type.STRING },
-        x: { type: Type.NUMBER },
-        text: { type: Type.STRING },
-        duration: { type: Type.NUMBER }
-      },
-      required: ["actor", "action"]
-    }
-  }
-}
-```
-
-## 🔮 Future Enhancements
-
-- **Props & Environment**: Add support for generating background elements or holding items.
-- **More Actors**: Dynamically spawn new stickmen via the JSON script.
-- **Sound Effects**: Trigger audio clips synchronized with actions (e.g., punch sounds, jump sounds).
-- **Collision Detection**: Allow stickmen to interact physically (e.g., pushing each other).
-
----
-*Built with ❤️ using React and Google Gemini.*
+*(Note: The AI generation relies a custom public endpoint, so no local API keys are required to run the AI Director).*
