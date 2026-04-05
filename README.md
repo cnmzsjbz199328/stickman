@@ -22,32 +22,28 @@ React's standard state (`useState`) is too slow for 60FPS animations due to virt
 
 ### 3. 🌍 World Simulation & Physics System
 The engine has evolved from a pure animation player into a mini game engine with spatial awareness.
-- **Shared World State**: Actors register themselves in a shared `WorldState` ref, allowing them to know each other's positions without triggering React re-renders.
+- **Shared World State**: Actors register themselves in a shared `World` class, allowing them to know each other's positions without triggering React re-renders.
 - **AABB Collision Detection**: Characters have a bounding box (width: 40px). When walking, the engine checks for collisions and physically prevents actors from overlapping or walking through each other.
 - **Hit Detection & Knockback**: The `attack` action isn't just a visual animation. It casts a hitbox (60px range). If another actor is within range, it triggers their `onHit` callback, interrupting their current action and applying a physical knockback force with a flailing animation.
 
-### 4. 🧠 Animation State Machine & Physics
-The engine includes a built-in state machine that handles blending and overrides:
-- **Base States**: `Idle` (breathing), `Walk` (swinging limbs), `Dance`.
-- **Overrides**: Actions like `Jump`, `Attack`, `Wave`, and `Flip` temporarily override specific limb angles or body rotations.
+### 4. 🧠 Animation State Machine & Extensible Action Registry (NEW)
+The engine includes a built-in state machine and a highly modular action architecture:
+- **Registry & Plugins**: Rather than hardcoded logic, all actions (Move, Jump, Attack) are standalone plugins separated into individual modules and registered dynamically via an `ActionRegistry`.
+- **Action Manager & Priority**: A robust `ActionManager` evaluates timeline conflicts based on hierarchical priorities. For instance, high-priority actions like **Hit** (knockback) instantly interrupt and cancel lower-priority actions like walking or attacking.
 - **Animation Juice**: Includes procedural physical nuances like **Center of Mass bouncing** (the body bobs up and down while walking) and **Squash & Stretch** (the body elongates during a jump).
 
-### 5. 🤖 AI Director (Llama 3.1 Integration)
-The project integrates a custom AI backend (`unified-ai-backend.tj15982183241.workers.dev`) running **Llama 3.1 8B** via Cerebras.
-- **Prompt Engineering**: Since Llama 3.1 does not have native enforced JSON schemas like Gemini, the engine uses strict prompt engineering to instruct the model to return *only* raw JSON.
-- **Robust Parsing**: Includes a regex fallback (`jsonStr.match(/\[[\s\S]*\]/)`) to safely extract the JSON array even if the LLM wraps the response in Markdown code blocks.
+### 5. 🤖 AI Director (Llama 3.1 via Vercel Serverless)
+The project integrates a secure Vercel Serverless backend (`api/generate.ts`) acting as a proxy to an AI endpoint running **Llama 3.1 8B**.
+- **Secure Architecture**: Environment variables and backend logic are hidden securely in standard Vercel serverless functions, decoupling them completely from the Vite React frontend.
+- **Prompt Engineering**: The engine uses strict prompt engineering to instruct the model to return *only* raw JSON conforming to the engine's protocol.
 
-### 6. 🚀 Future Expansions & Technical Vision (Roadmap to a 2D Game Engine)
-The engine is transitioning from an animation player into a fully systematic AI-driven 2D game engine. The development roadmap is prioritized as follows:
+### 6. 🚀 Future Expansions & Technical Vision (Roadmap)
+The engine is transitioning from an animation player into a fully systematic AI-driven 2D game engine. The development roadmap is actively prioritized:
 
-1. **Vertical Physics & Gravity**: Introduce a true Y-axis, vertical velocity (`vy`), and gravity to support jumping, falling, and ground collision.
-2. **Unified World System**: Consolidate actors and static objects (walls, tables, weapons) into a single `World` state with a unified spatial structure (`x, y, width, height, type, solid`).
-3. **Platform System**: Implement one-way platforms (stand on top, pass through from below) to evolve from a "flat stage" to a level-based environment.
-4. **Independent Collision System**: Decouple collision logic from movement/attack actions into a standalone `CollisionSystem` that handles solid (blocking) and trigger (hit/pickup) collisions.
-5. **Extensible Action System**: Refactor hardcoded actions into a registry-based `ActionSystem` and introduce a **Timeline System** to support action overlapping, canceling, and blending.
-6. **Weapon System (V1)**: Bind weapons to FK skeletal joints (hands) with independent hitboxes that activate during attacks.
-7. **AI Protocol Upgrade**: Enhance the JSON schema so the AI generates not just the `script`, but also the `actors` and `objects` to dynamically construct the world.
-8. **Event System**: Introduce an event bus (`emit("hit")`, `emit("land")`) to trigger reactive behaviors and allow the AI to generate dynamic story continuations based on engine events.
+- [x] **Phase 1: Action Registry & Decoupling**: Refactored hardcoded acts into the `ActionRegistry` and introduced action priority management via `ActionManager`.
+- [ ] **Phase 2: Physics & ECS**: Implement Vertical Physics, Gravity, advanced AABB Colliders, and state snapshot systems.
+- [ ] **Phase 3: Advanced Animation**: Add CCD/Analytical IK Solvers for limb placement, procedural physical wobbling, and animation crossfading.
+- [ ] **Phase 4: AI Intelligence**: Imbue the AI Director with spatial awareness capabilities and build an Event bus for reactive behaviors.
 
 ## 📜 The JSON Scripting Protocol
 
@@ -82,17 +78,20 @@ Scripts are parsed as an array of steps. Each step is an array of actions that e
 
 ### Prerequisites
 - Node.js (v18+ recommended)
+- [Vercel CLI](https://vercel.com/cli) (Recommended for local API testing: `npm i -g vercel`)
 
-### Installation
+### Installation & Local Development
 
 1. Clone the repository and install dependencies:
    ```bash
    npm install
    ```
 
-2. Start the development server:
+2. Start the local server using Vercel CLI (Recommended):
    ```bash
-   npm run dev
+   vercel dev
    ```
+   > 💡 **Important:** Using `vercel dev` will simultaneously start the Vite frontend and the Vercel backend Serverless APIs (`/api/generate`). If you only use `npm run dev`, the AI generation function will not map correctly.
 
-*(Note: The AI generation relies a custom public endpoint, so no local API keys are required to run the AI Director).*
+### Deployment
+The split frontend-backend architecture is 100% compliant with Vercel zero-config deployments. Pushing to GitHub or running `vercel --prod` will deploy the application and its serverless functions securely out of the box.
