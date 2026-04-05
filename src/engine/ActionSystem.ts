@@ -1,6 +1,7 @@
 import { World, Actor } from './World';
 import { Action } from './base/Action';
 import { ActionRegistry } from './actions/ActionRegistry';
+import { ActionManager } from './systems/ActionManager';
 
 // We register all built-in actions here or in an index initialization file.
 import { MoveAction } from './actions/MoveAction';
@@ -30,7 +31,7 @@ export class ActionSystem {
 
   static triggerHit(actor: Actor, force: number, time: number) {
     const hit = ActionRegistry.create('hit', { force }, time);
-    if (hit) actor.actions.push(hit);
+    if (hit) ActionManager.pushAction(actor, hit);
   }
 
   static execute(actor: Actor, type: string, params: any, time: number): Promise<void> {
@@ -38,7 +39,7 @@ export class ActionSystem {
       const action = ActionRegistry.create(type, params, time);
       if (action) {
         action.resolve = resolve;
-        actor.actions.push(action);
+        ActionManager.pushAction(actor, action);
       } else {
         resolve();
       }
